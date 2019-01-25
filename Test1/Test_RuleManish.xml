@@ -1,0 +1,50 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE Rule PUBLIC "sailpoint.dtd" "sailpoint.dtd">
+<Rule language="beanshell" name="Test_RuleManish">
+  <Source> 
+import sailpoint.object.*;
+import java.util.*;
+import sailpoint.api.*;
+
+
+String usr = "Harshi10";
+
+Identity idenObj = context.getObjectByName(Identity.class,"Harshi10");
+ 
+List entGrpList = idenObj.getExceptions();
+System.out.println("entGrpList:::"+entGrpList);
+
+	for(EntitlementGroup entGrp : entGrpList)
+	{
+		Attributes attr = entGrp.getAttributes();
+		System.out.println("attr:::"+attr);
+		Map mp = attr.getMap();
+		System.out.println("mp:::"+mp);
+		
+	}
+
+// to get the member list of a given workgroup
+/*
+Identity workGroup = context.getObjectByName(Identity.class,"HOTEL_APPROVER_GROUP");
+ System.out.println("workGroup:::"+workGroup);
+ List workgroupMembers = new ArrayList();
+ String usr = "000712";
+ Iterator members = ObjectUtil.getWorkgroupMembers(context, workGroup, null);
+ while (members.hasNext()) 
+ {
+	 Object[] object = (Object[]) members.next();
+	 Identity firstValue = (Identity) object[0];
+	 System.out.println("firstValue:::"+firstValue);
+	 workgroupMembers.add(firstValue.getName());
+ }	
+ System.out.println("workgroupMembers:::"+workgroupMembers);
+ boolean boool = workgroupMembers.contains(usr);
+ System.out.println("boool:::"+boool);
+ 
+ */
+ 
+ 
+ return "test";
+
+   </Source>
+</Rule>
