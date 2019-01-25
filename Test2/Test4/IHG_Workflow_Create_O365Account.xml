@@ -1,0 +1,394 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE Workflow PUBLIC "sailpoint.dtd" "sailpoint.dtd">
+<Workflow explicitTransitions="true" libraries="Identity" name="IHG_Workflow_Create_O365Account" type="Subprocess">
+  <Variable input="true" name="event">
+    <Description>The IdentityChangeEvent</Description>
+  </Variable>
+  <Variable input="true" name="identityName">
+    <Description>The name of the identity.</Description>
+  </Variable>
+  <Variable input="true" name="objectguid">
+    <Description>The immutableID of the identity.</Description>
+  </Variable>
+  <Variable input="true" name="createO365Flag">
+    <Description>The immutableID of the identity.</Description>
+  </Variable>
+  <Variable input="true" name="emailADacc">
+    <Description>The emailID of the AD account which will be mapped to userPrincipal name of the office365.</Description>
+  </Variable>
+  <Variable input="true" name="assignedLicense">
+    <Description>The license information of the office365 account.</Description>
+  </Variable>
+  <Variable initializer="string:true" name="isManager"/>
+  <Variable initializer="script:(identityDisplayName != void) ? identityDisplayName : resolveDisplayName(identityName)" input="true" name="identityDisplayName">
+    <Description>
+		The displayName of the identity being updated.
+		Query for this using a projection query and fall back to the name.
+		</Description>
+  </Variable>
+  <Variable initializer="string:AccountsRequest" input="true" name="flow">
+    <Description>What type of LCM flow is this</Description>
+  </Variable>
+  <Variable name="plan">
+    <Description>The provisioning plan which is built during the workflow.
+ </Description>
+  </Variable>
+  <Variable name="workerHROrgType">
+    <Script>
+      <Source>
+        import sailpoint.object.Identity;
+        Identity identity = context.getObjectByName(Identity.class,identityName);
+        String workerHROrgType;
+        if(identity.getAttribute("workerhrorgtype")!=null){
+
+        workerHROrgType=identity.getAttribute("workerhrorgtype").toLowerCase();
+
+        }     
+        else{
+        workerHROrgType="NA";
+        }
+        return workerHROrgType;
+      </Source>
+    </Script>
+  </Variable>
+  <Variable name="workerType">
+    <Script>
+      <Source>
+        import sailpoint.object.Identity;
+        Identity identity = context.getObjectByName(Identity.class,identityName);
+        String workertype;
+        if(identity.getAttribute("workertype")!=null){
+
+        workertype=identity.getAttribute("workertype").toLowerCase();
+
+        }     
+        else{
+        workertype="NA";
+        }
+        return workertype;
+      </Source>
+    </Script>
+  </Variable>
+  <Variable initializer="string:LCM" input="true" name="source">
+    <Description>
+ String version of sailpoint.object.Source to indicate
+ where the request originated. Defaults to LCM.
+ </Description>
+  </Variable>
+  <Variable name="project">
+    <Description>
+ ProvisioningProject which is just a compiled version of the ProvisioningPlan.
+ </Description>
+  </Variable>
+  <Variable initializer="false" name="trace">
+    <Description>
+      Used for debugging this workflow and when set to true trace
+      will be sent to stdout.
+    </Description>
+  </Variable>
+  <Variable editable="true" initializer="true" name="foregroundProvisioning">
+    <Description>Normally provisioning is done in a step that uses the 
+      option to force the workflow to be suspend and be resumed in a
+      background task thread.  This prevents the browser session from
+      hanging since provision can sometimes take a long time.  For demos
+      and testing it can be better to do this in the foreground so that
+      provisioning will have been performed when control is returned to the
+      user.  This prevents having to run the Perform Maintenance task to
+      see the results of the request.</Description>
+  </Variable>
+  <RuleLibraries>
+    <Reference class="sailpoint.object.Rule" name="IHG_Rule_Library"/>
+    <Reference class="sailpoint.object.Rule" name="IHG_Rule_Library_Office365"/>
+  </RuleLibraries>
+  <Step icon="Start" name="Start" posX="28" posY="10">
+    <Transition to="Create O365 Account"/>
+  </Step>
+  <Step icon="Message" name="Create O365 Account" posX="174" posY="9" resultVariable="plan" wait="2">
+    <Description>Process the user that joined and create plan for the user. Only create office 365 account for new "employees".</Description>
+    <Script>
+      <Source>
+    import sailpoint.object.ProvisioningPlan;
+		import sailpoint.object.Identity;
+		import sailpoint.object.ProvisioningPlan.AccountRequest;
+		import sailpoint.object.ProvisioningPlan.AttributeRequest;
+		import java.util.List;
+		import java.util.ArrayList;
+		import sailpoint.api.Provisioner;
+		import sailpoint.object.QueryOptions;
+		import java.util.HashMap;
+		import java.util.Map;
+		import sailpoint.object.Attributes;
+		import sailpoint.object.Link;
+		import sailpoint.tools.GeneralException;
+		import sailpoint.object.Filter;
+		import sailpoint.object.Application;
+	  import sailpoint.object.Custom;
+		import sailpoint.api.*;
+  	import java.util.*;
+		import org.apache.log4j.Logger;
+		import sailpoint.object.*;
+	  
+		Logger  mylogger = Logger.getLogger("ihg.idm.Joiner");
+		String license = "";
+		AttributeRequest attrRequest1;
+		String locationType = null;
+        
+		ProvisioningPlan plan = new ProvisioningPlan();
+		Identity identityObject = context.getObjectByName(Identity.class, identityName);
+		Custom customApp = context.getObjectByName(Custom.class,"IHG_ApplicationNames");
+		String appName = customApp.get("Office365");
+		/* Get objectguid for setting the immutable id */
+        
+		String objectGuidTemp = objectguid.substring(1,objectguid.length()-1);
+ 
+		List accreqs = new ArrayList();                                     
+		
+		//create O365 account  
+		mylogger.debug("Joiner:Create O365 account workflow for identity: "+identityName);
+        
+		AccountRequest acctReq = new AccountRequest();  
+		acctReq.setOperation(AccountRequest.Operation.Create);  
+		acctReq.setApplication(appName);    
+        
+		acctReq.add(new AttributeRequest("userPrincipalName",emailADacc));
+		String userPassword="";
+		
+    userPassword=generatePassword();
+		String userPasswordDecrypted=context.decrypt(userPassword);
+		acctReq.add(new AttributeRequest("*password*",userPasswordDecrypted));
+		/*if (company not null)*/
+
+		if(identityObject.getAttribute("company")!=null){
+        String displayName=identityObject.getAttribute("lastname")+", "+identityObject.getAttribute("firstname")+" ( "+identityObject.getAttribute("company")+")";
+        acctReq.add(new AttributeRequest("displayName",displayName));   /*create display name */
+		}
+		else{
+          String displayName=identityObject.getAttribute("lastname")+", "+identityObject.getAttribute("firstname");
+          acctReq.add(new AttributeRequest("displayName",displayName));   
+		}
+
+		acctReq.add(new AttributeRequest("mailNickname",identityName));
+		acctReq.add(new AttributeRequest("isFederatedDomain",true));
+		acctReq.add(new AttributeRequest("immutableId",objectGuidTemp)); 
+
+
+		if(identityObject.getAttribute("firstname")!= null){
+          acctReq.add(new AttributeRequest("givenName",identityObject.getAttribute("firstname")));
+		}
+		if(identityObject.getAttribute("lastname")!= null){
+          acctReq.add(new AttributeRequest("surname",identityObject.getAttribute("lastname")));	
+		}
+		if(identityObject.getAttribute("locationtype")!= null){
+          locationType = identityObject.getAttribute("locationtype");
+		}
+
+          /* Assignment of the license - EnterprisePack(E3) for Corporate Employees   */
+        if(workerHROrgType.equalsIgnoreCase("corporate"))
+        {
+             license = "ENTERPRISEPACK";
+             attrRequest1=new AttributeRequest("assignedLicenses",license);
+        }
+         /* Assignment of the license - EnterprisePack(E3) for OLM Paid Hotel user with Manager as true   */
+        else if(workerType.equalsIgnoreCase("EE") &amp;&amp; (locationType.equalsIgnoreCase("Hotel") &amp;&amp; (isManager.equalsIgnoreCase("true")))){
+              license = "ENTERPRISEPACK";
+              attrRequest1=new AttributeRequest("assignedLicenses",license);
+        }
+          /* Assignment of the license - StandardPack(E1) for Reservations User */
+        else if(workerHROrgType.equalsIgnoreCase("reservations")){
+             license = "STANDARDPACK";
+             attrRequest1=new AttributeRequest("assignedLicenses",license);
+        }
+        attrRequest1.setOperation(ProvisioningPlan.Operation.Add);
+        acctReq.add(attrRequest1);	
+        workflow.put("assignedLicense",license);
+        workflow.put("createO365Flag","true");
+        mylogger.debug("Joiner:Create O365 account :License value : "+license);
+
+   		//Additional Attributes which are added
+       if(identityObject.getAttribute("department")!=null){
+        acctReq.add(new AttributeRequest("department",identityObject.getAttribute("department")));
+      }
+       if(identityObject.getAttribute("primaryworklocation")!=null){
+        acctReq.add(new AttributeRequest("physicalDeliveryOfficeName",identityObject.getAttribute("primaryworklocation")));
+      }
+
+      if(identityObject.getAttribute("workmobilenumber")!= null){
+        acctReq.add(new AttributeRequest("mobile",identityObject.getAttribute("workmobilenumber")));
+       }
+      if(identityObject.getAttribute("workfaxnumber")!= null){
+          acctReq.add(new AttributeRequest("facsimileTelephoneNumber",identityObject.getAttribute("workfaxnumber")));
+      }
+
+      if(identityObject.getAttribute("title")!= null){
+        acctReq.add(new AttributeRequest("jobtitle",identityObject.getAttribute("title")));
+      }
+      if(identityObject.getAttribute("primaryWorkAddress1")!= null){
+        acctReq.add(new AttributeRequest("streetAddress",identityObject.getAttribute("primaryWorkAddress1")));
+      }
+      if(identityObject.getAttribute("primaryWorkCity")!= null){
+        acctReq.add(new AttributeRequest("city",identityObject.getAttribute("primaryWorkCity")));
+      }
+      if(identityObject.getAttribute("primaryWorkState")!= null){
+        acctReq.add(new AttributeRequest("state",identityObject.getAttribute("primaryWorkState")));
+      }
+      if(identityObject.getAttribute("primaryWorkZipCode")!= null){
+        acctReq.add(new AttributeRequest("postalcode",identityObject.getAttribute("primaryWorkZipCode")));
+      }
+      if(identityObject.getAttribute("telephonenumber")!= null){
+        acctReq.add(new AttributeRequest("telephonenumber",identityObject.getAttribute("telephonenumber")));
+      }
+	      //Usage Location will be 2digit isocountry code. need to add logic as per Nantha confirmation
+     if(identityObject.getAttribute("primaryworkisocountrycode")!= null){
+		    String isoCountryCode = identityObject.getAttribute("primaryworkisocountrycode");
+            log.debug("Joiner:Create O365 account :isoCountryCode value : "+isoCountryCode);
+            String twoDigitISOCountryCodeVal = retriveUsageLocation(isoCountryCode);
+            log.debug("Joiner:Create O365 account :isoCountryCode 2digit value : "+twoDigitISOCountryCodeVal);
+            if(twoDigitISOCountryCodeVal != null){
+            acctReq.add(new AttributeRequest("usageLocation",twoDigitISOCountryCodeVal));     
+            if(twoDigitISOCountryCodeVal.equalsIgnoreCase("AA")) {
+            //Send mail only to globalidentitymanagement@ihg.com //*************
+                Custom emailC = context.getObjectByName(Custom.class, "IHG_EmailConstants");
+                String emailDest = emailC.get("AggregationFailureTarget");
+                String tplName = "IHG_Email_Country_Code_Failure_Notification";
+                EmailTemplate template = context.getObjectByName(EmailTemplate.class, tplName);
+                if (null == template) {
+                   // log.error("ERROR: could not find email template [ " + tplName + "]");
+                    return;
+                }
+                template = (EmailTemplate) template.deepCopy(context);//??
+                if (null == template) {
+                  //  log.error("ERROR: failed to deepCopy template [ " + tplName + "]");
+                    return;
+                }
+                Map args = new HashMap();
+
+                args.put("countryCode",isoCountryCode);
+                EmailOptions ops = new EmailOptions();
+                ops.setTo(emailDest);
+                ops.setVariable("recipient", "spadmin");
+                ops.setVariable("owner", "spadmin");
+                ops.setVariables(args);
+				        context.sendEmailNotification(template, ops);
+                mylogger.debug("\n\n Two Digit Country code Update Unsuccessful : Email Sent");
+            }
+        }
+
+    }
+
+    acctReq.setNativeIdentity(emailADacc);
+    accreqs.add(acctReq);  
+    plan.setAccountRequests(accreqs);
+    plan.setIdentity(identityObject);
+    plan.setNativeIdentity(emailADacc);
+	   
+    mylogger.debug("Joiner:Create O365 account : Provisioning Plan of Office365 ::"+plan.toXml());
+    mylogger.debug("Joiner:Create O365 account :Exit Office 365 create step");
+    return plan;   
+
+	</Source>
+    </Script>
+    <Transition to="Compile Project"/>
+  </Step>
+  <Step action="call:compileProvisioningProject" name="Compile Project" posX="406" posY="10" resultVariable="project">
+    <Arg name="identityName" value="ref:identityName"/>
+    <Arg name="plan" value="ref:plan"/>
+    <Arg name="requester" value="string:spadmin"/>
+    <Arg name="source" value="string:UI"/>
+    <Arg name="optimisticProvisioning" value="string:true"/>
+    <Arg name="requireCreateTemplates" value="string:false"/>
+    <Arg name="noApplicationTemplates" value="string:true"/>
+    <Description>Compile the provisioning plan into a provisioning project.
+ If you need to pass in provisioner options like "noFiltering"
+or "noRoleDeprovisioning" you must pass them as explicit
+ arguments to the call.
+ The evaluation options "requester" and "source" are commonly
+set here.
+You can also pass things into the Template and Field scripts by
+defining Args in this step.</Description>
+    <Transition to="Provision"/>
+  </Step>
+  <Step action="call:provisionProject" icon="Provision" name="Provision" posX="682" posY="10">
+    <Arg name="background" value="string:true"/>
+    <Arg name="project" value="ref:project"/>
+    <Description>Provision the project.</Description>
+    <Transition to="Update AD Account with license" when="script:(assignedLicense != null)"/>
+  </Step>
+  <Step name="Update AD Account with license" posX="492" posY="194">
+    <Arg name="identityDisplayName"/>
+    <Arg name="identityName" value="ref:identityName"/>
+    <Arg name="createO365Flag" value="ref:createO365Flag"/>
+    <Arg name="objectguid"/>
+    <Arg name="assignedLicense" value="ref:assignedLicense"/>
+    <Arg name="emailADacc"/>
+    <Arg name="project"/>
+    <Arg name="source"/>
+    <Arg name="event"/>
+    <Arg name="plan"/>
+    <Arg name="flow"/>
+    <WorkflowRef>
+      <Reference class="sailpoint.object.Workflow" name="IHG_Workflow_Update_ADAccount"/>
+    </WorkflowRef>
+    <Transition to="Update Manager" when="script:(createO365Flag != null)"/>
+  </Step>
+  <Step name="Update Manager" posX="492" posY="194">
+    <Description>Update Manager</Description>
+    <Script>
+      <Source>
+        import java.util.List;
+        import java.util.*;
+        import java.util.ArrayList;
+        import sailpoint.object.*;
+        import sailpoint.object.Identity;
+        import java.util.HashMap;
+        import java.util.Map;
+        import sailpoint.object.Attributes;
+        import sailpoint.object.Link;
+        import sailpoint.tools.GeneralException;
+        import sailpoint.object.Filter;
+        import sailpoint.object.Application;
+        import sailpoint.object.Custom;
+        import org.apache.log4j.Logger;
+        Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+				Link link;
+				String objectID = null;
+					// FEB10 Release : Shikha : manager update in O365
+        Custom customApp = context.getObjectByName(Custom.class,"IHG_ApplicationNames");
+        String o365App = customApp.get("Office365");
+        Identity identity = context.getObjectByName(Identity.class, identityName);
+        Application appLink = context.getObjectByName(Application.class, o365App);
+		
+				mylogger.debug(" Joiner: Office 365:Enter Manager update method ");
+        if (identity.getLink(appLink) != null) {
+          link = identity.getLink(appLink);
+		  		objectID = link.getAttribute("objectId");
+        	mylogger.debug(" Joiner: Office 365:Retrieve ObjectId "+objectID);
+        }
+				if(objectID!=null){
+          String managerValue=null;
+          Identity manager = identity.getManager();
+          mylogger.debug(" Joiner: Office 365:Enter Manager update method Office365"+manager);
+				if(manager!=null &amp;&amp; identity!=null){
+       	 mylogger.debug(" Joiner: Office 365:Enter if of manager and identity not null ");
+          managerValue = setManager(o365App,manager,identity);
+          mylogger.debug(" Joiner: Office 365:Manger Value"+managerValue);
+          if(managerValue!=null){
+            	link.setAttribute("manager",managerValue);
+            	context.saveObject(identity);
+              context.commitTransaction();
+          }else{
+            	link.setAttribute("manager",null);
+            	context.saveObject(identity);
+              context.commitTransaction();
+          }
+				}else{
+						link.setAttribute("manager",null);
+						context.saveObject(identity);
+    				context.commitTransaction();
+				}	
+				}
+			</Source>
+    </Script>
+    <Transition to="end"/>
+  </Step>
+  <Step icon="Stop" name="end" posX="784" posY="10"/>
+</Workflow>

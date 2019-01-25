@@ -1,0 +1,432 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE Workflow PUBLIC "sailpoint.dtd" "sailpoint.dtd">
+<Workflow explicitTransitions="true" libraries="Identity" name="IHG_Workflow_Create_O365Account_Standalone" type="Subprocess">
+  <Variable initializer="true" name="transient"/>
+  <Variable editable="true" input="true" name="id"/>
+  <Variable input="true" name="identityName">
+    <Description>The name of the identity.</Description>
+  </Variable>
+  <Variable input="true" name="manager">
+    <Description>Name of the user that will rrecieve the forms.</Description>
+    <Script>
+      <Source>
+        import sailpoint.object.Identity;
+        import org.apache.log4j.Logger;
+        Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+        Identity id = context.getObjectByName(Identity.class,identityName);
+        if (id.getManager()!=null) {
+        mylogger.warn("\n\nOffice365: Manager WF variable set: "+id.getManager().getName());
+        //workflow.put("manager",id.getManager().getName());
+        return id.getManager().getName();
+        } else {
+        //workflow.put("manager","spadmin");
+        return "spadmin";
+        }
+      </Source>
+    </Script>
+  </Variable>
+  <Variable initializer="true" name="trace">
+    <Description>enable this to see stuff spit out to stdout</Description>
+  </Variable>
+  <Variable input="true" name="objectguid">
+    <Description>The objectguid of the user&amp;amp;#39;s AD account.</Description>
+  </Variable>
+  <Variable input="true" name="emailArgument"/>
+  <Variable input="true" name="license"/>
+  <Variable input="true" name="emailADacc"/>
+  <Variable input="true" name="getImmutableID"/>
+  <Variable input="true" name="altEmail"/>
+  <Variable initializer="script:(identityDisplayName != void) ? identityDisplayName : resolveDisplayName(identityName)" input="true" name="identityDisplayName"/>
+  <Variable name="appNameAD">
+    <Script>
+      <Source>
+        import sailpoint.object.*;
+        import java.util.*;
+        Custom customApp = context.getObjectByName(Custom.class,"IHG_ApplicationNames");
+
+        String appName = customApp.get("AD");
+        return appName;
+      </Source>
+    </Script>
+  </Variable>
+  <Variable name="appNameO365">
+    <Script>
+      <Source>
+        import sailpoint.object.*;
+        import java.util.*;
+        Custom customApp = context.getObjectByName(Custom.class,"IHG_ApplicationNames");
+
+        String appName = customApp.get("Office365");
+        return appName;
+      </Source>
+    </Script>
+  </Variable>
+  <Variable name="project"/>
+  <Variable name="plan">
+    <Description>A plan that will be generated based on the diffs to perform provisioning. </Description>
+  </Variable>
+  <Variable input="true" name="createO365Flag">
+    <Description>The create O365Flag to distinguish the flow of updating AD account.</Description>
+  </Variable>
+  <Variable editable="true" name="doRefresh">
+    <Description>
+      Set to true to cause an identity refresh after the changes in the plan
+      have been provisioned.  This is normally off, you might want this on
+      if you want modification of identity or link attributes to result in
+      an immediate re-evaluation of assigned and detected roles.
+    </Description>
+  </Variable>
+  <Description> 
+    Workflow to create O365 account, with identityname,newEmail and license as input arguments. Then update all other relevant targets. 
+  </Description>
+  <RuleLibraries>
+    <Reference class="sailpoint.object.Rule" name="LCM Workflow Library"/>
+    <Reference class="sailpoint.object.Rule" name="IHG_Rule_Library"/>
+    <Reference class="sailpoint.object.Rule" name="IHG_Rule_Library_Workday"/>
+    <Reference class="sailpoint.object.Rule" name="IHG_Rule_Library_Office365"/>
+  </RuleLibraries>
+  <Step icon="Start" name="Start" posX="15" posY="12">
+    <Transition to="CreateExecutePlanOffice365"/>
+  </Step>
+  <Step name="CreateExecutePlanOffice365" posX="174" posY="9" resultVariable="plan">
+    <Arg name="source" value="ref:source"/>
+    <Script>
+      <Source>  
+        import sailpoint.object.*;
+        import java.util.*;
+        import sailpoint.api.*;      
+        import sailpoint.tools.*;
+        import org.apache.log4j.Logger;
+        import sailpoint.object.*;
+        import org.apache.log4j.Logger;
+        Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+
+
+        String personalEmail = "";     
+        String email=emailArgument;
+        
+
+           Identity identity = context.getObjectByName(Identity.class,identityName);
+        
+        if(email!=null)
+        {
+        personalEmail = identity.getAttribute("email");
+        identity.setAttribute("email",email);
+        if(personalEmail!=null &amp;&amp; !personalEmail.toLowerCase().contains("@ihg"))
+         identity.setAttribute("altEmail",personalEmail);
+        context.saveObject(identity);
+        context.commitTransaction();
+        }
+        ProvisioningPlan plan = new ProvisioningPlan();
+        Identity identity = context.getObjectByName(Identity.class,identityName);
+        List accreqs = new ArrayList();
+        //create O365 account  
+        AccountRequest acctReq = new AccountRequest();
+        acctReq.setOperation(AccountRequest.Operation.Create);
+        acctReq.setApplication(appNameO365);
+
+        //always generate new email , different from joiner and discussd on 2nd december
+        String email=emailArgument;
+
+       /* if(email!=null)
+        {
+        personalEmail = identity.getAttribute("email");
+        }
+        workflow.put("altEmail",personalEmail);
+        workflow.put("emailADacc",email); 
+        */
+        acctReq.setNativeIdentity(email);      
+        AttributeRequest attrRequest1;
+        /** assign license as available in args**/
+        workflow.put("license",license);
+        attrRequest1=new AttributeRequest("assignedLicenses",license);
+        attrRequest1.setOperation(ProvisioningPlan.Operation.Add);
+        acctReq.add(attrRequest1);
+        accreqs.add(acctReq);
+        plan.setAccountRequests(accreqs);
+        plan.setIdentity(identity);
+        plan.setNativeIdentity(email);
+        mylogger.debug("\n\nOffice365: Provisioned Plan of Office365  ::" + plan.toXml());
+        workflow.put("createO365Flag","true");
+        Provisioner provisioner= new Provisioner(context);
+        provisioner.setNoLocking(true);
+        provisioner.execute(plan);
+      </Source>
+    </Script>
+    <Transition to="Update Staging Table"/>
+  </Step>
+  <Step name="Update Staging Table" posX="492" posY="194">
+    <Script>
+      <Source>
+        import java.sql.Connection;
+        import java.sql.DriverManager;
+        import java.sql.SQLException;
+        import java.sql.Statement;
+        import org.apache.log4j.Logger;    
+
+        Logger  mylogger = Logger.getLogger("ihg.idm.Office365");
+        Identity identity = context.getObjectByName(Identity.class, identityName);
+        Statement stmt = null;
+        Connection connection=null;
+        String usersamaccnumber=identity.getAttribute("networkid");
+        String useremail=identity.getAttribute("email");
+
+        int result;
+
+        try {
+        Class.forName("oracle.jdbc.driver.OracleDriver");
+        connection=getConnectionforStagingTable();
+        stmt = connection.createStatement();
+        String sql = "update IHG_AD_STAGING set EMAILID = '"+useremail+"' where SAMACCOUNTNAME = '"+usersamaccnumber+"'";
+        result=stmt.executeUpdate(sql);
+        mylogger.warn("Office365: Inside Office365 Update Staging Table ::: "+"Insert Completed");
+        } catch (ClassNotFoundException e) {
+        //mylogger.error(e.getMessage());
+        } catch (SQLException e) {
+      //  mylogger.error(e.getMessage());
+        } finally{
+        if (stmt != null) {
+        try {
+        stmt.close();
+        } catch (Exception e) {
+       // mylogger.error(e.getMessage());
+        }
+        }
+        }
+      </Source>
+    </Script>
+    <Transition to="Update PDB">
+      <Script>
+        <Source> 
+          import org.apache.log4j.Logger;
+          import sailpoint.object.Identity;
+
+          Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+          Identity identity = context.getObjectByName(Identity.class, identityName); 
+          String source=identity.getAttribute("source");
+          if (source!=null){
+          if(!(source.equalsIgnoreCase("Workday") || source.equalsIgnoreCase("Kimpton"))) {
+          return true;
+          }
+          } else {
+          return true;
+          }
+        </Source>
+      </Script>
+    </Transition>
+    <Transition to="Update Workday">
+      <Script>
+        <Source>
+          import org.apache.log4j.Logger;
+          import sailpoint.object.Identity;
+          import org.apache.log4j.Logger;
+          Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+          Identity identity = context.getObjectByName(Identity.class, identityName); 
+          String source=identity.getAttribute("source");
+          if (source!=null){
+          if((source.equalsIgnoreCase("Workday")) || (source.equalsIgnoreCase("Kimpton"))) {
+          return true;
+          }
+          }
+        </Source>
+      </Script>
+    </Transition>
+    <Transition to="Refresh Identity"/>
+  </Step>
+  <Step icon="Message" name="Update PDB" posX="990" posY="149">
+    <Script>
+      <Source>
+        import sailpoint.object.*;
+        import java.util.*;
+        import sailpoint.api.*;
+        import sailpoint.tools.*;
+        import org.apache.log4j.Logger;
+
+
+
+        Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+
+        mylogger.debug("\n\nOffice365: Inside PDB Modify Plan: "+identityName);
+
+        ProvisioningPlan planPDB = new ProvisioningPlan();
+        Identity identityObject = context.getObjectByName(Identity.class, identityName);
+        Custom customApp = context.getObjectByName(Custom.class, "IHG_ApplicationNames");
+        String PeopleDBApp = customApp.get("PeopleDB");
+
+        List accreqsPDB = new ArrayList();
+
+        //Modify PeopleDB account  
+        AccountRequest acctReqPeopleDB = new AccountRequest();
+        acctReqPeopleDB.setOperation(AccountRequest.Operation.Modify);
+        acctReqPeopleDB.setApplication(PeopleDBApp);
+        acctReqPeopleDB.add(new AttributeRequest("Email",identityObject.getAttribute("email")));
+
+        accreqsPDB.add(acctReqPeopleDB);
+        planPDB.setAccountRequests(accreqsPDB);
+        planPDB.setIdentity(identityObject);
+        planPDB.setNativeIdentity(identityObject.getName());
+        mylogger.debug("\n\nOffice365: Provisioned Plan of PDB ::" + planPDB.toXml());
+        Provisioner provisioner = new Provisioner(context);
+        provisioner.setNoLocking(true);
+        provisioner.execute(planPDB);
+      </Source>
+    </Script>
+    <Transition to="Update Manager" when="script:(createO365Flag != null)"/>
+  </Step>
+  <Step icon="Message" name="Update Workday" posX="990" posY="149">
+    <Arg name="identityName" value="ref:identityName"/>
+    <Script>
+      <Source>
+        import sailpoint.object.*;
+        import java.util.*;
+        import sailpoint.tools.*;
+        import org.apache.log4j.Logger;
+        Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+        mylogger.debug("\n\nOffice365: Enter the step Update Workday::"+identityName);
+        // Shikha - Enhancement 28/7 - single method invocation for Write back ESB and database.
+        String response = method_updateWorkday(identityName);
+       // //System.out.println("Office365:Update Workday response:"+response);
+        return "success";  
+      </Source>
+    </Script>
+    <Transition to="Update PDB"/>
+  </Step>
+  <Step name="Update Manager" posX="492" posY="194">
+    <Description>Update Manager</Description>
+    <Script>
+      <Source>
+
+        import java.util.*;
+        import sailpoint.object.*;
+        import sailpoint.tools.*;
+        import org.apache.log4j.Logger;
+        Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+
+        Link link;
+        String objectID = null;
+        Custom customApp = context.getObjectByName(Custom.class,"IHG_ApplicationNames");
+        String o365App = customApp.get("Office365");
+        Identity identity = context.getObjectByName(Identity.class, identityName);
+        Application appLink = context.getObjectByName(Application.class, o365App);
+
+       // //System.out.println(" Joiner: Office 365:Enter Manager update method ");
+        if (identity.getLink(appLink) != null) {
+        link = identity.getLink(appLink);
+        objectID = link.getAttribute("objectId");
+       // //System.out.println(" Joiner: Office 365:Retrieve ObjectId "+objectID);
+        }
+        if(objectID!=null){
+        String managerValue=null;
+        Identity manager = identity.getManager();
+       // //System.out.println(" Joiner: Office 365:Enter Manager update method Office365"+manager);
+        if(manager!=null &amp;&amp; identity!=null){
+       // //System.out.println(" Joiner: Office 365:Enter if of manager and identity not null ");
+        managerValue = setManager(o365App,manager,identity);
+       // //System.out.println(" Joiner: Office 365:Manger Value"+managerValue);
+        if(managerValue!=null){
+        link.setAttribute("manager",managerValue);
+        context.saveObject(identity);
+        context.commitTransaction();
+        }else{
+        link.setAttribute("manager",null);
+        context.saveObject(identity);
+        context.commitTransaction();
+        }
+        }else{
+        link.setAttribute("manager",null);
+        context.saveObject(identity);
+        context.commitTransaction();
+        }	
+        }
+      </Source>
+    </Script>
+    <Transition to="Update GRS with new Email">
+      <Script>
+        <Source> 
+          import org.apache.log4j.Logger;
+          import sailpoint.object.*;
+          Logger mylogger = Logger.getLogger("ihg.idm.Office365");
+          Identity identity = context.getObjectByName(Identity.class, identityName);
+          Custom customApp = context.getObjectByName(Custom.class,"IHG_ApplicationNames");
+          String appName = customApp.get("GRS");
+          Application app = context.getObjectByName(Application.class, appName);
+          if (identity.getLink(app) != null) {
+          Link grsLink = identity.getLink(app);     
+         // //System.out.println("Enter transition of GRS updating email address");
+          return true;
+          }else{
+          return false;
+          }
+        </Source>
+      </Script>
+    </Transition>
+    <Transition to="Refresh Identity"/>
+  </Step>
+  <Step icon="Message" name="Update GRS with new Email" posX="174" posY="9" resultVariable="plan">
+    <Description>Update GRS with new Email</Description>
+    <Script>
+      <Source>
+        import sailpoint.object.*;     
+        import java.util.*;        
+        import sailpoint.tools.*;     
+        import sailpoint.api.*;        
+        import org.apache.log4j.Logger; 
+
+        Logger  mylogger = Logger.getLogger("ihg.idm.Joiner");
+
+        mylogger.debug("GRS: Inside UpdateGRS Account for ::: "+identityName);
+        ProvisioningPlan plan = new ProvisioningPlan();     
+
+        Identity identityObject = context.getObjectByName(Identity.class, identityName);     
+        Custom customApp = context.getObjectByName(Custom.class,"IHG_ApplicationNames");
+        List accreqs = new ArrayList();  
+        AccountRequest acctReqGRS = null;
+        String appNameGRS = customApp.get("GRS");
+        Application appGRS= context.getObjectByName(Application.class,appNameGRS);
+        Link linkObjIdentityGRS=identityObject.getLink(appGRS);
+        String emailAddress = identityObject.getAttribute("email");
+
+        if(linkObjIdentityGRS !=null &amp;&amp; emailAddress!=null) 
+        {
+        java.util.Date date = new java.util.Date();
+        Timestamp createdts = new Timestamp(date.getTime());
+        String timestamp = String.valueOf(createdts); 
+        ////System.out.println("Enter GRS link obj");
+        acctReqGRS = new AccountRequest();
+        acctReqGRS.setOperation(AccountRequest.Operation.Modify);  
+        acctReqGRS.setApplication(appNameGRS);
+        acctReqGRS.add(new AttributeRequest("EMAILADDRESS",emailAddress)); 
+        acctReqGRS.add(new AttributeRequest("LST_UPDT_TS",timestamp)); 
+        acctReqGRS.add(new AttributeRequest("LST_UPDT_USR_ID","IDM")); 
+        acctReqGRS.setNativeIdentity(identityObject.getAttribute("immutableid"));
+        accreqs.add(acctReqGRS);
+        context.setProperty("source","IHG_Workflow_Access_O365_Account");
+        context.setProperty("WorkflowPlan",plan);
+        }
+
+        Provisioner provisioner= new Provisioner(context);
+        provisioner.setNoLocking(true);
+        provisioner.execute(plan);
+        context.commitTransaction();
+       // //System.out.println("Execute plan completed: "+plan.toXml());
+        return plan;
+      </Source>
+    </Script>
+    <Transition to="Refresh Identity"/>
+  </Step>
+  <Step action="call:refreshIdentity" condition="ref:doRefresh" icon="Task" name="Refresh Identity" posX="886" posY="178">
+    <Arg name="identityName" value="ref:identityName"/>
+    <Arg name="provision" value="true"/>
+    <Arg name="correlateEntitlements" value="true"/>
+    <Arg name="synchronizeAttributes" value="true"/>
+    <Description>
+      Add arguments as necessary to enable refresh features.  Typically you only want this
+      to correlate roles and possibly provision if we notice new assigned roles.
+      Note that provisioning will be done in the Identity Refresh workflow so if there
+      are any provisioning forms to display we won't feed them directly to the
+      current user, they'll have to return to the inbox.
+    </Description>
+    <Transition to="end"/>
+  </Step>
+  <Step icon="Stop" name="end" posX="838"/>
+</Workflow>

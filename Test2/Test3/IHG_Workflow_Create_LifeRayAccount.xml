@@ -1,0 +1,173 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE Workflow PUBLIC "sailpoint.dtd" "sailpoint.dtd">
+<Workflow explicitTransitions="true" libraries="Identity" name="IHG_Workflow_Create_LifeRayAccount" type="Subprocess">
+  <Variable input="true" name="event">
+    <Description>The IdentityChangeEvent</Description>
+  </Variable>
+  <Variable input="true" name="identityName">
+    <Description>The name of the identity.</Description>
+  </Variable>
+  <Variable initializer="string:true" name="hrsource"/>
+  <Variable initializer="script:(identityDisplayName != void) ? identityDisplayName : resolveDisplayName(identityName)" input="true" name="identityDisplayName">
+    <Description>
+      The displayName of the identity being updated.
+      Query for this using a projection query and fall back to the name.
+    </Description>
+  </Variable>
+  <Variable initializer="string:AccountsRequest" input="true" name="flow">
+    <Description>What type of LCM flow is this</Description>
+  </Variable>
+  <Variable name="plan">
+    <Description>The provisioning plan which is built during the workflow.
+    </Description>
+  </Variable>
+  <Variable initializer="string:LCM" input="true" name="source">
+    <Description>
+      String version of sailpoint.object.Source to indicate
+      where the request originated. Defaults to LCM.
+    </Description>
+  </Variable>
+  <Variable name="project">
+    <Description>
+      ProvisioningProject which is just a compiled version of the ProvisioningPlan.
+    </Description>
+  </Variable>
+  <RuleLibraries>
+    <Reference class="sailpoint.object.Rule" name="IHG Rule Library1"/>
+  </RuleLibraries>
+  <Step icon="Start" name="Start" posX="28" posY="10">
+    <Transition to="Create Liferay Account"/>
+  </Step>
+  <Step icon="Message" name="Create Liferay Account" posX="174" posY="9" resultVariable="plan">
+    <Description>Process the user that joined and create plan for the user. Only
+      create AD account for new "employees".</Description>
+    <Script>
+      <Source>
+        import sailpoint.object.Identity;
+        import sailpoint.object.Filter;
+        import sailpoint.object.QueryOptions;
+        import java.util.HashMap;
+        import java.util.List;
+        import java.util.Map;
+        import sailpoint.object.Attributes;
+        import sailpoint.object.Link;
+        import sailpoint.tools.GeneralException;
+        import sailpoint.object.Filter;
+        import sailpoint.object.Application;
+        import sailpoint.api.Provisioner;
+        import sailpoint.object.ProvisioningPlan;
+        import sailpoint.object.ProvisioningPlan.AccountRequest;
+        import sailpoint.object.ProvisioningPlan.AttributeRequest;
+        import java.util.Date;
+        import java.text.DateFormat;
+        import java.text.SimpleDateFormat;
+        import java.util.Calendar;
+        import sailpoint.object.ProvisioningResult;
+        import java.sql.Timestamp;
+        import sailpoint.object.Custom;
+        import sailpoint.api.Provisioner;
+        import org.apache.log4j.Logger;    
+        Logger  mylogger = Logger.getLogger("ihg.idm.Joiner");
+
+        mylogger.debug("Joiner:Create Liferay Account for ::: "+identityName);
+
+        Date date = new Date();
+        String strDateFormat = "dd-MMM-yy";
+        SimpleDateFormat sdf = new SimpleDateFormat(strDateFormat);  
+        String jobSubmitDate=sdf.format(date);
+        String jobStatUpdateDt=sdf.format(date);
+        java.util.Date date= new java.util.Date();
+        Timestamp ts=new Timestamp(date.getTime());
+        String timestamp=String.valueOf(ts);
+        String membershipind = ""; 
+        String emailcomm = ""; 
+
+        ProvisioningPlan plan = new ProvisioningPlan();
+        ProvisioningResult result = new ProvisioningResult();
+        Identity identityObject = context.getObjectByName(Identity.class, identityName);
+        String countrycode = identityObject.getAttribute("primaryworkisocountrycode");
+
+        /*********** changing the values in boolean depending on Y/N ************/      
+
+       if(identityObject.getAttribute("membershipind")!=null)
+     {
+        if(identityObject.getAttribute("membershipind").equalsIgnoreCase("y"))
+        {
+        membershipind = "1";
+        }
+        else
+        {
+        membershipind = "0";
+        }
+     }
+        if(identityObject.getAttribute("emailcommunication")!=null)
+     {
+        if(identityObject.getAttribute("emailcommunication").equalsIgnoreCase("y"))
+        {
+        emailcomm = "1";
+        }
+        else
+        {
+        emailcomm = "0";
+        }
+     } 
+
+        List accreqs = new ArrayList();
+        AccountRequest acctReq = new AccountRequest();
+        acctReq.setOperation(AccountRequest.Operation.Create);
+        Custom customApp = context.getObjectByName(Custom.class,"IHG_ApplicationNames");
+        String appName = customApp.get("Liferay");
+        acctReq.setApplication(appName);
+        acctReq.add(new AttributeRequest("USR_FRST_NM", identityObject.getAttribute("firstname")));
+        acctReq.add(new AttributeRequest("USR_LST_NM", identityObject.getAttribute("lastname")));
+        acctReq.add(new AttributeRequest("USR_EMAIL_ID",identityObject.getAttribute("email")));
+        acctReq.add(new AttributeRequest("IATA_NBR", identityObject.getAttribute("iatanbr")));
+        acctReq.add(new AttributeRequest("MBRSHP_ID", identityObject.getAttribute("pcrnbr")));
+        acctReq.add(new AttributeRequest("MBRSHP_IND",membershipind));
+        acctReq.add(new AttributeRequest("TCC_EMAIL_OPT_IN_IND",emailcomm));
+        acctReq.add(new AttributeRequest("JOB_STAT_CD","20"));      
+        acctReq.add(new AttributeRequest("CREAT_USR_ID",identityObject.getAttribute("firstname")));       
+        acctReq.add(new AttributeRequest("SUPPLEMENTAL_USR_INFO_TXT",identityObject.getName()));             
+        acctReq.add(new AttributeRequest("LST_UPDT_USR_ID","tccadmin"));
+        acctReq.add(new AttributeRequest("JOB_SUBMIT_DT",jobSubmitDate));
+        acctReq.add(new AttributeRequest("JOB_STAT_UPDT_DT",jobStatUpdateDt));
+        acctReq.add(new AttributeRequest("CREAT_TS",timestamp));
+        acctReq.add(new AttributeRequest("LST_UPDT_TS",timestamp));
+        acctReq.add(new AttributeRequest("JOB_EXECUTION_IND","0"));
+        acctReq.add(new AttributeRequest("CTRY_CD",countrycode));
+        accreqs.add(acctReq);
+
+        plan.setAccountRequests(accreqs);
+        plan.setIdentity(identityObject);
+        result.setStatus(ProvisioningResult.STATUS_COMMITTED );
+        Provisioner provisioner = new Provisioner(context);
+        provisioner.setNoLocking(true);
+        provisioner.execute(plan);
+        mylogger.debug("Joiner:Create Liferay Account Plan ::: "+plan.toXml());
+        return plan;
+      </Source>
+    </Script>
+    <Transition to="end"/>
+  </Step>
+  <Step action="call:compileProvisioningProject" name="Compile Project" posX="406" posY="10" resultVariable="project">
+    <Arg name="identityName" value="ref:identityName"/>
+    <Arg name="plan" value="ref:plan"/>
+    <Arg name="requester" value="string:spadmin"/>
+    <Arg name="source" value="string:UI"/>
+    <Arg name="optimisticProvisioning" value="string:false"/>
+    <Arg name="requireCreateTemplates" value="string:false"/>
+    <Arg name="noApplicationTemplates" value="string:true"/>
+    <Description>Compile the provisioning plan into a provisioning project. If you need to pass in provisioner options like "noFiltering"
+      or "noRoleDeprovisioning" you must pass them as explicit arguments to the call.
+      The evaluation options "requester" and "source" are commonly set here.
+      You can also pass things into the Template and Field scripts by defining Args in this step.</Description>
+    <Transition to="Provision"/>
+  </Step>
+  <Step action="call:provisionProject" icon="Provision" name="Provision" posX="682" posY="10">
+    <Arg name="background" value="string:true"/>
+    <Arg name="project" value="ref:project"/>
+    <Description>Provision the project.</Description>
+    <Transition to="end"/>
+  </Step>
+  <Step icon="Stop" name="end" posX="784" posY="10"/>
+</Workflow>

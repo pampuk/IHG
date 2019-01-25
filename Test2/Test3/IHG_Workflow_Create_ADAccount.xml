@@ -1,0 +1,772 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE Workflow PUBLIC "sailpoint.dtd" "sailpoint.dtd">
+<Workflow explicitTransitions="true" libraries="Identity" name="IHG_Workflow_Create_ADAccount" type="Subprocess">
+  <Variable input="true" name="event">
+    <Description>The IdentityChangeEvent</Description>
+  </Variable>
+  <Variable input="true" name="identityName">
+    <Description>The name of the identity.</Description>
+  </Variable>
+  <Variable initializer="string:true" name="hrsource"/>
+  <Variable initializer="string:true" name="isManager"/>
+  <Variable initializer="string:true" name="workerType"/>
+  <Variable initializer="string:true" name="workerHROrgType"/>														 
+															  
+  <Variable initializer="string:true" name="O365EmailFlag"/>
+  <Variable initializer="script:(identityDisplayName != void) ? identityDisplayName : resolveDisplayName(identityName)" input="true" name="identityDisplayName">
+    <Description>The displayName of the identity being updated.
+      Query for this using a projection query and fall back to the name.</Description>
+  </Variable>
+  <Variable initializer="string:AccountsRequest" input="true" name="flow">
+    <Description>What type of LCM flow is this</Description>
+  </Variable>
+  <Variable name="plan">
+    <Description>The provisioning plan which is built during the workflow.</Description>
+  </Variable>
+  <Variable initializer="string:LCM" input="true" name="source">
+    <Description>String version of sailpoint.object.Source to indicate
+      where the request originated. Defaults to LCM.</Description>
+  </Variable>
+  <Variable initializer="false" name="trace">
+    <Description>Used for debugging this workflow and when set to true trace
+      will be sent to stdout.</Description>
+  </Variable>
+  <Variable name="project">
+    <Description>ProvisioningProject which is just a compiled version of the ProvisioningPlan.</Description>
+  </Variable>
+  <Variable name="ouCreationMessage"/>
+  <Variable name="domain"/>
+  <Variable name="newdomain"/>
+  <Variable name="location"/>
+  <Variable name="geog_region"/>
+  <Variable name="notificationemail"/>
+  <Variable name="userdn"/>
+  <Variable name="gotoADCreate"/>
+  <Variable name="userphysicaldeliveryname"/>
+  <Variable editable="true" initializer="true" name="foregroundProvisioning">
+    <Description>Normally provisioning is done in a step that uses the 
+      option to force the workflow to be suspend and be resumed in a
+      background task thread.  This prevents the browser session from
+      hanging since provision can sometimes take a long time.  For demos
+      and testing it can be better to do this in the foreground so that
+      provisioning will have been performed when control is returned to the
+      user.  This prevents having to run the Perform Maintenance task to
+      see the results of the request.</Description>
+  </Variable>
+  <RuleLibraries>
+    <Reference class="sailpoint.object.Rule" name="IHG_Rule_Library"/>
+  </RuleLibraries>
+  <Step icon="Start" name="Start" posX="28" posY="10">
+    <Transition to="GetDomain"/>
+  </Step>
+  <Step icon="Message" name="GetDomain" posX="15" posY="120">
+    <Script>
+      <Source>
+        import sailpoint.object.Identity;
+        import sailpoint.object.Filter;
+        import sailpoint.object.QueryOptions;
+        import java.util.HashMap;
+        import java.util.List;
+        import java.util.Map;
+        import sailpoint.object.Attributes;
+        import sailpoint.object.Link;
+        import sailpoint.tools.GeneralException;
+        import sailpoint.object.Filter;
+        import sailpoint.object.Application;
+        import sailpoint.api.Provisioner;
+        import sailpoint.object.ProvisioningPlan;
+        import sailpoint.object.ProvisioningPlan.AccountRequest;
+        import sailpoint.object.ProvisioningPlan.AttributeRequest;
+        import sailpoint.object.Custom;
+        import org.apache.log4j.Logger;    
+        Logger  mylogger = Logger.getLogger("ihg.idm.Joiner");
+
+
+        mylogger.debug("Joiner:CreateAD: Inside GetDomain for ::: "+identityName);
+        
+        Identity identityObject = context.getObjectByName(Identity.class, identityName);
+        /**
+        Get the domain for each usertype
+
+        **/
+        String workersubtype=null;
+        String workertype=null;
+        String locationtype=null;
+        String primaryworkisocountrycode=null;
+        String primaryworklocation=null;
+        String workerhrorgtype=null;
+
+        if(identityObject.getAttribute("workersubtype")!=null){
+        workersubtype=identityObject.getAttribute("workersubtype");
+        }
+        if(identityObject.getAttribute("workertype")!=null){
+        workertype=identityObject.getAttribute("workertype");
+        }
+        if(identityObject.getAttribute("locationtype")!=null){
+        locationtype=identityObject.getAttribute("locationtype");
+        }
+        if(identityObject.getAttribute("primaryworkisocountrycode")!=null){
+        primaryworkisocountrycode=identityObject.getAttribute("primaryworkisocountrycode");
+        }
+        if(identityObject.getAttribute("workerhrorgtype")!=null){
+        workerhrorgtype=identityObject.getAttribute("workerhrorgtype");
+        }
+        if(identityObject.getAttribute("primaryworklocation")!=null){
+        primaryworklocation=identityObject.getAttribute("primaryworklocation");
+        }
+        String domain=null;
+		//Kimton Domain
+		if(!(identityName.substring(0,1).equalsIgnoreCase("k"))){
+        if(((workersubtype!=null) &amp;&amp; (locationtype!=null) &amp;&amp; (primaryworkisocountrycode!=null))||((workersubtype==null) &amp;&amp; (locationtype!=null) &amp;&amp; (primaryworkisocountrycode!=null))){
+
+        if(locationtype.equalsIgnoreCase("hotel")){	//Removed locationtype.equalsIgnoreCase("hotels")
+        domain=getOUFranOLM(identityObject);
+														 
+        }
+
+        }
+       /**DS Comments :: Release 03/31/2017 changing below method to use locationtype instead of orgtype**/
+
+        if(locationtype!=null &amp;&amp; primaryworklocation!=null){
+        if((locationtype.equalsIgnoreCase("corporate"))||(locationtype.equalsIgnoreCase("reservations"))){
+
+        domain=getOUCorpRes(identityObject);
+														 
+        }
+        }
+        /**  if(workerhrorgtype!=null &amp;&amp; primaryworklocation!=null){
+        if((workerhrorgtype.equalsIgnoreCase("corporate"))||(workerhrorgtype.equalsIgnoreCase("reservations"))){
+
+        domain=getOUCorpRes(identityObject);
+														
+        }
+        }**/
+        if(workersubtype!=null){
+        if(workersubtype.equalsIgnoreCase("travelagent")){
+        domain=getOUforTravelAgents(identityObject);
+																		
+
+        }
+        }
+        if(workersubtype!=null){
+        if(workersubtype.equalsIgnoreCase("sow vendors")){
+
+        domain=getOUforSOWContractor(identityObject);
+																
+
+        }
+        }
+		}
+		else{
+		domain = getOUforKimpton(identityObject);
+		
+		}
+        /**
+        Get the domain for each usertype
+
+        **/
+        if(domain!=null){
+        workflow.put("domain",domain);
+        }
+        else{
+        workflow.put("domain","n/a");
+        String message="Active Directory OU not found for : "+identityObject.getName()+" ("+identityObject.getAttribute("firstname")+", "+identityObject.getAttribute("lastname")+") with Primary Work Location : "+primaryworklocation;
+        workflow.put("ouCreationMessage",message);
+        workflow.put("userphysicaldeliveryname",primaryworklocation.toUpperCase());
+
+        }
+
+        mylogger.debug("Joiner:CreateAD: Domain for User ::: "+ workflow.get("domain"));
+      </Source>
+    </Script>
+    <Transition to="Generate Create OU Form">
+      <Script>
+        <Source>
+          if(workflow.get("domain").equalsIgnoreCase("n/a")){
+          return true;
+          }
+        </Source>
+      </Script>
+    </Transition>
+    <Transition to="Create AD Account"/>
+  </Step>
+  <Step icon="Approval" name="Generate Create OU Form" posX="214" posY="220">
+    <Approval mode="serial" owner="spadmin" renderer="workItemForm.xhtml" return="newdomain,location,geog_region,notificationemail" send="requester,ouCreationMessage,userphysicaldeliveryname">
+      <Arg name="workItemType" value="Form"/>
+      <Arg name="workItemDescription" value="Create OU"/>
+      <Arg name="workItemForm" value="IHG_Form_Approval"/>
+      <Arg name="requester" value="ref:launcher"/>
+      <Arg name="workItemRequester" value="ref:launcher"/>
+      <Arg name="ouCreationMessage" value="ref:ouCreationMessage"/>
+      <Arg name="userphysicaldeliveryname" value="ref:userphysicaldeliveryname"/>
+    </Approval>
+    <Transition to="Create Domain"/>
+  </Step>
+  <Step icon="Message" name="Create Domain" posX="15" posY="120">
+    <Arg name="newdomain" value="ref:newdomain"/>
+    <Arg name="location" value="ref:location"/>
+    <Arg name="geog_region" value="ref:geog_region"/>
+    <Arg name="notificationemail" value="ref:notificationemail"/>
+    <Script>
+      <Source>
+        import sailpoint.object.Identity;
+        import java.sql.Connection;
+        import java.sql.DriverManager;
+        import java.sql.SQLException;
+        import java.sql.Statement;
+        import org.apache.log4j.Logger;   
+        import sailpoint.object.Custom; 
+
+        Logger  mylogger = Logger.getLogger("ihg.idm.Joiner");
+
+        String userProvidedOU = workflow.get("newdomain");
+        mylogger.debug("Joiner:CreateAD: Inside Create Domain");
+
+        String environment = context.getObjectByName(Custom.class,"IHG_AD_Domain").get("environment");
+
+        String primaryworkisocountrycode = null;
+        String workertype = null;
+        String workerhrorgtype = null;
+        Identity identityObject = context.getObjectByName(Identity.class, identityName);
+        String region;
+        String corpOrRes;
+        String baseDC;
+        String baseOU;
+        String isADDomainPresent = "";
+        String gotoADCreate = "";
+
+        Boolean insertedinDB = false;
+        if (identityObject.getAttribute("primaryworkisocountrycode") != null) {
+        primaryworkisocountrycode = identityObject.getAttribute("primaryworkisocountrycode");
+        region = getADDomainfromCountryCode(primaryworkisocountrycode);
+        isADDomainPresent = "true";
+
+        } else {
+        isADDomainPresent = "false";
+
+        }
+        if (identityObject.getAttribute("workerhrorgtype") != null) {
+        workerhrorgtype = identityObject.getAttribute("workerhrorgtype");
+        if (workerhrorgtype.equalsIgnoreCase("corporate")) {
+        corpOrRes = "Corp";
+        isADDomainPresent = "true";
+        } else if (workerhrorgtype.equalsIgnoreCase("reservations")) {
+        corpOrRes = "Res";
+        isADDomainPresent = "true";
+
+        } else {
+        isADDomainPresent = "false";
+
+        }
+        } else {
+        isADDomainPresent = "false";
+
+        }
+        mylogger.debug("Joiner:CreateAD: Inside Create Domain ::: newdomain::: "+newdomain);
+
+
+        if (!(isADDomainPresent.equalsIgnoreCase("false"))) {
+        if(newdomain.equalsIgnoreCase("apac")){
+        baseOU = "ou=" + newdomain + ",OU=" + corpOrRes + ",OU=Services Delivery";
+        }
+        else{
+        baseOU = "ou=" + newdomain + ",OU=" + corpOrRes + ",OU=Service Delivery";
+        }
+        // baseDC = "DC=" + region + ",DC=Corp,DC=QA";
+        baseDC = "DC=" + region + ","+environment;
+
+        }
+
+        Boolean iscreated = createOU(baseOU, baseDC);
+
+        Boolean iscreatedUsers;
+        if (!iscreated) {
+
+        iscreatedUsers = createOU("ou=Users," + baseOU, baseDC);
+        }
+
+        /* Insert into staging */
+
+
+        if ((!(isADDomainPresent.equalsIgnoreCase("false"))) &amp;&amp; (!iscreated) &amp;&amp; (!iscreatedUsers)) {
+        Statement stmt = null;
+        Connection connection = null;
+        int result;
+        String holidex_code = newdomain;
+        String holidex_code_db="";
+        if(identityObject.getAttribute("primaryworklocation")!=null){
+        holidex_code_db=identityObject.getAttribute("primaryworklocation");
+        }
+
+        String location_type = workerhrorgtype;
+        String ad_domain = region;
+        String ad_ou = ou = "ou=Users," + baseOU + "," + baseDC;
+        String location=workflow.get("location"); 	     //take user input 
+        String geog_region=workflow.get("geog_region");  // take user input 
+        String notEmail=workflow.get("notificationemail"); 
+
+        String countryName="" ; 
+
+        if(primaryworkisocountrycode!=null){
+        countryName=getCountryNamefromCountryCode(primaryworkisocountrycode);
+        }
+
+
+        try {
+        Class.forName("oracle.jdbc.driver.OracleDriver");
+        connection = getConnectionforStagingTable();
+        stmt = connection.createStatement();
+        String sql;
+        if(notEmail!=null)
+        {
+        sql = "INSERT INTO IHG_AD_LOCATIONTYPE(holidex_code,location,location_type,geographic_region_name,country_name,ad_domain,ad_ou,notification_email) values ('" + holidex_code_db + "', '" + location + "', '" + location_type + "', '" + geog_region + "', '" +countryName+"', '" +ad_domain+"', '" +ad_ou+"', '"+notEmail+"')";
+        }
+
+        else{
+        sql = "INSERT INTO IHG_AD_LOCATIONTYPE(holidex_code,location,location_type,geographic_region_name,country_name,ad_domain,ad_ou) values ('" + holidex_code_db + "', '" + location + "', '" + location_type + "', '" + geog_region + "', '" +countryName+"', '" +ad_domain+"', '" +ad_ou+"')";
+        }
+
+        result = stmt.executeUpdate(sql);
+        insertedinDB = true;
+
+        } catch (ClassNotFoundException e) {
+       // mylogger.error(e.getMessage());
+
+        } catch (SQLException e) {
+
+       // mylogger.error(e.getMessage());
+        } finally {
+
+        if (stmt != null) {
+        try {
+        stmt.close();
+        } catch (Exception e) {
+       // mylogger.error(e.getMessage());
+        }
+        }
+        /* Commenting connection.close() to test closed connection issue - LG 10/3
+        if (connection != null) {
+        try {
+        connection.close();
+        } catch (Exception e) {
+        //mylogger.error(e.getMessage());
+        }
+        }*/
+        }
+
+        if (insertedinDB) {
+
+        gotoADCreate = "yes";
+        workflow.put("domain", ad_ou);
+
+        }
+
+        } else {
+        gotoADCreate = "no";
+        }
+        mylogger.debug("Joiner:CreateAD: Inside Create Domain ::: gotoADCreate"+gotoADCreate);
+        workflow.put("gotoADCreate", gotoADCreate);
+
+
+      </Source>
+    </Script>
+    <Transition to="end">
+      <Script>
+        <Source>
+          if(workflow.get("gotoADCreate").equalsIgnoreCase("no")){
+
+          return true;
+          }
+        </Source>
+      </Script>
+    </Transition>
+    <Transition to="Create AD Account"/>
+  </Step>
+  <Step icon="Message" name="Create AD Account" posX="293" posY="1" resultVariable="plan">
+    <Arg name="domain" value="ref:domain"/>
+    <Description>Process the user that joined and create plan for the user. Only
+      create AD account for new "employees".</Description>
+    <Script>
+      <Source>
+        import sailpoint.object.Identity;
+        import sailpoint.object.Filter;
+        import sailpoint.object.QueryOptions;
+        import java.util.HashMap;
+        import java.util.List;
+        import java.util.Map;
+        import sailpoint.object.Attributes;
+        import sailpoint.object.Link;
+        import sailpoint.tools.GeneralException;
+        import sailpoint.object.Filter;
+        import sailpoint.object.Application;
+        import sailpoint.api.Provisioner;
+        import sailpoint.object.ProvisioningPlan;
+        import sailpoint.object.ProvisioningPlan.AccountRequest;
+        import sailpoint.object.ProvisioningPlan.AttributeRequest;
+        import sailpoint.object.Custom;
+        import org.apache.log4j.Logger;    
+		import sailpoint.api.ObjectUtil;								
+        Logger  mylogger = Logger.getLogger("ihg.idm.Joiner");
+
+
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account:::");
+
+        ProvisioningPlan plan = new ProvisioningPlan();
+        String networkid=null;
+        String workerhrorgtype=null;
+        String locationtype=null;
+        String emailCommunication=null;
+        String workertype=null;
+        Identity identityObject = context.getObjectByName(Identity.class, identityName);
+        if(! (hrsource.equalsIgnoreCase("TravelAgent"))) {
+		 //obtain lock on the custom object
+        	//System.out.println("Obtaining lock on the custom object"); 
+  				Custom allowedValues = ObjectUtil.transactionLock(context, Custom.class, "IHG_Custom_Joiner_NetworkIDObject");
+  			//	System.out.println("lock obtained on the custom object"); 
+        	
+        	try
+  				{
+        		networkid=samAccountName(identityObject);
+        		identityObject.setAttribute("networkid",networkid);
+        		context.saveObject(identityObject);
+        		//System.out.println("network id generated is :: "+networkid);
+        		updateNetworkIDInStagingTable(identityObject,isManager,workerType,workerHROrgType);
+        		//System.out.println("network id generated is updated in the table");
+        	}
+        	catch(Exception e)
+  				{
+    				e.printStackTrace();
+  				}
+  				finally
+        	{
+    				context.commitTransaction();	
+    				//System.out.println("lock released from the custom object");
+  				}												   
+        }
+        String netID = identityObject.getAttribute("networkid");
+
+        if(identityObject.getAttribute("emailcommunication")!=null)
+        {
+        if(identityObject.getAttribute("emailcommunication").equalsIgnoreCase("y"))
+        {
+        emailCommunication = "yes";
+        }
+        else
+        {
+        emailCommunication = "no";
+        }
+        }
+
+        List accreqs = new ArrayList();
+        //create AD account  
+        AccountRequest acctReq = new AccountRequest();
+        acctReq.setOperation(AccountRequest.Operation.Create);
+        Custom customApp = context.getObjectByName(Custom.class, "IHG_ApplicationNames");
+        String appName = customApp.get("AD");
+
+        acctReq.setApplication(appName);
+        String domain=workflow.get("domain");
+        /**
+        Get the domain for each usertype
+
+        **/
+
+
+        acctReq.add(new AttributeRequest("givenName", identityObject.getAttribute("firstname")));
+        acctReq.add(new AttributeRequest("sn", identityObject.getAttribute("lastname")));
+        // Added by Amit - Enhancement to add msDS-cloudExtensionAttribute8 - 4/8/2017
+        acctReq.add(new AttributeRequest("extensionAttribute8", "HUMANACCOUNT")); 
+        // Ended by Amit - Enhancement to add msDS-cloudExtensionAttribute8 - 4/8/2017
+        if(identityObject.getAttribute("company")!=null){
+        String displayName=identityObject.getAttribute("lastname")+", "+identityObject.getAttribute("firstname")+" ("+identityObject.getAttribute("company")+")";
+        acctReq.add(new AttributeRequest("displayName",displayName));  
+        }
+        else{
+        acctReq.add(new AttributeRequest("displayName", (identityObject.getAttribute("lastname") + ", " + identityObject.getAttribute("firstname"))));
+        }
+        acctReq.add(new AttributeRequest("sAMAccountName", identityObject.getAttribute("networkid")));
+        acctReq.add(new AttributeRequest("ObjectType", "User"));
+        //Decrypt password from user profile
+
+
+        String userPassword="";
+        if(identityObject.getPassword()!=null){
+        userPassword=identityObject.getPassword();
+        }
+        else{
+        userPassword=generatePassword();
+        identityObject.setPassword(userPassword);
+        context.saveObject(identityObject);
+        context.commitTransaction(); 
+        }
+        String userPasswordDecrypted=context.decrypt(userPassword);
+        
+
+        acctReq.add(new AttributeRequest("*password*",userPasswordDecrypted));
+        acctReq.add(new AttributeRequest("pwdLastSet",true));
+        
+        /* User Manager */
+        if(identityObject.getManager()!=null){
+        Identity manager=identityObject.getManager();
+        String managerDN=getManagerDN(manager);
+		
+        acctReq.add(new AttributeRequest("manager", managerDN));
+        }
+        /* User Principle Name */
+        String upn=getPrincipleName(domain);
+        acctReq.add(new AttributeRequest("userprincipalname", netID + "@"+upn));
+        acctReq.add(new AttributeRequest("IIQDisabled", false));
+        /* Below are all the other AD Attributes */
+        /* generate Email for user's who are eligible for O365 */
+        if( identityObject.getAttribute("workerhrorgtype")!=null){
+        workerhrorgtype= identityObject.getAttribute("workerhrorgtype");
+        }
+
+        if( identityObject.getAttribute("workersubtype")!=null){
+        workersubtype= identityObject.getAttribute("workersubtype");
+        }
+        if(identityObject.getAttribute("locationtype")!=null){
+        locationtype=identityObject.getAttribute("locationtype");
+        }
+        String isManager=workflow.get("isManager");
+
+
+        if(identityObject.getAttribute("workertype")!=null){
+        workertype=identityObject.getAttribute("workertype");
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account : workertype :"+workertype);
+        }
+
+        /* generate Email for user's who are eligible for O365 */
+		if(identityName.substring(0,1).equalsIgnoreCase("k")){
+		if(identityObject.getAttribute("altEmail")!=null){
+		acctReq.add(new AttributeRequest("mail",identityObject.getAttribute("altEmail")));
+        }
+		}
+		else{
+        if((workertype!=null &amp;&amp; workertype.equalsIgnoreCase("EE") &amp;&amp; isManager.equals("true")) || ((workerhrorgtype!=null) &amp;&amp; (workerhrorgtype.equalsIgnoreCase("corporate") ||workerhrorgtype.equalsIgnoreCase("reservations")))){
+					
+        String userEmail=getEmail(identityObject);
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account : userEmail :"+userEmail);
+        acctReq.add(new AttributeRequest("mail", userEmail));
+        identityObject.setAttribute("email",userEmail);
+        context.saveObject(identityObject);
+        context.commitTransaction(); 
+
+        }
+        else{
+        String workEmail = identityObject.getAttribute("email");
+        String alternatEmail = identityObject.getAttribute("altEmail");
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account : workEmail :"+ workEmail+" alternatEmail :"+alternatEmail);
+
+        if(workEmail!=null &amp;&amp; alternatEmail!=null){
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account : Before equals !workEmail.equalsIgnoreCase(alternatEmail)");
+
+        if(!workEmail.equalsIgnoreCase(alternatEmail)) {
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account : WorkEmail is not equal to Alternate Email,update AD account with altEmail"+workEmail);
+
+        acctReq.add(new AttributeRequest("mail", identityObject.getAttribute("email")));
+        }
+        } else {
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account : in else mail");
+
+        acctReq.add(new AttributeRequest("mail", identityObject.getAttribute("email")));
+        }
+        }
+		}
+		
+        acctReq.add(new AttributeRequest("company", identityObject.getAttribute("company")));
+        acctReq.add(new AttributeRequest("userAccountControl", "512"));
+        acctReq.add(new AttributeRequest("division", "Division"));
+        if(identityObject.getAttribute("title")!=null){
+        acctReq.add(new AttributeRequest("title",identityObject.getAttribute("title")));
+        }
+        if(identityObject.getAttribute("primaryworkaddress1")!=null){
+        acctReq.add(new AttributeRequest("streetAddress",identityObject.getAttribute("primaryworkaddress1")));
+        }
+        if(identityObject.getAttribute("primaryworkcity")!=null){
+        acctReq.add(new AttributeRequest("l",identityObject.getAttribute("primaryworkcity")));
+        }
+
+        if(identityObject.getAttribute("primaryworkisocountrycode")!=null){
+        acctReq.add(new AttributeRequest("c",identityObject.getAttribute("primaryworkisocountrycode")));
+        }
+        if(identityObject.getAttribute("primaryworkstate")!=null){
+        acctReq.add(new AttributeRequest("st",identityObject.getAttribute("primaryworkstate")));
+        }
+        if(identityObject.getAttribute("primaryworkzipcode")!=null){
+        acctReq.add(new AttributeRequest("postalcode",identityObject.getAttribute("primaryworkzipcode")));
+        }
+
+        if (hrsource.equalsIgnoreCase("TravelAgent")) {
+        identityObject.setAttribute("primaryworklocation","4AGNT");
+
+        context.saveObject(identityObject);
+        context.commitTransaction(); 
+
+        }
+        if(identityObject.getAttribute("primaryworklocation")!=null){
+        acctReq.add(new AttributeRequest("physicalDeliveryOfficeName", identityObject.getAttribute("primaryworklocation")));
+        }
+
+        acctReq.add(new AttributeRequest("proxyAddresses", "SMTP:" + identityObject.getAttribute("email")));
+        acctReq.add(new AttributeRequest("extensionAttribute9", "Google"));
+        acctReq.add(new AttributeRequest("extensionAttribute14", "Google"));
+        if(hrsource.equalsIgnoreCase("self-registration")){
+        acctReq.add(new AttributeRequest("msDS-cloudExtensionAttribute20", "iiquser"));
+        }
+
+        acctReq.add(new AttributeRequest("mobile",identityObject.getAttribute("workmobilenumber")));
+        acctReq.add(new AttributeRequest("telephonenumber",identityObject.getAttribute("telephonenumber")));
+        acctReq.add(new AttributeRequest("facsimileTelephoneNumber",identityObject.getAttribute("workfaxnumber")));
+        if(identityObject.getAttribute("department")!=null){
+        acctReq.add(new AttributeRequest("department",identityObject.getAttribute("department")));
+        }
+        acctReq.add(new AttributeRequest("employeeID",identityObject.getName()));
+
+        /* Additional Attributes for Travel Agent */
+        if (hrsource.equalsIgnoreCase("TravelAgent")) {
+        acctReq.add(new AttributeRequest("tCCEmailOptIn", emailCommunication));
+        acctReq.add(new AttributeRequest("tCCIATANumber", identityObject.getAttribute("iatanbr")));
+        acctReq.add(new AttributeRequest("tCCLoyaltyNumber", identityObject.getAttribute("pcrnbr")));
+        acctReq.add(new AttributeRequest("distinguishedName", "cn=" + identityObject.getName() + ","+domain));
+        /* set dn in workflow variable */
+        String dnAD="cn=" + identityObject.getName() + ","+domain;
+        workflow.put("userdn",dnAD);
+        acctReq.add(new AttributeRequest("co",identityObject.getAttribute("primaryworkisocountrycode")));
+        acctReq.setNativeIdentity("cn=" + identityObject.getName() + ","+domain);
+        String userdomain=getUserDomain(domain);
+
+        } else {
+        acctReq.add(new AttributeRequest("distinguishedName", "cn=" + netID + ","+domain));
+        acctReq.setNativeIdentity("cn=" + netID + ","+domain);
+
+        /* set dn in workflow variable */
+        String dnAD="cn=" + netID+ ","+domain;
+        workflow.put("userdn",dnAD);
+        String userdomain=getUserDomain(domain);
+        //acctReq.add(new AttributeRequest("domain",userdomain.toUpperCase()));
+        identityObject.setAttribute("domain",userdomain);
+        context.saveObject(identityObject);
+        context.commitTransaction(); 
+
+        }
+
+        /* Additional Attributes for Travel Agent */
+        accreqs.add(acctReq);
+        plan.setAccountRequests(accreqs);
+        plan.setIdentity(identityObject);
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account ::: AD Plan is: " + plan.toXml());
+		
+
+																								
+
+        Provisioner provisioner = new Provisioner(context);
+        provisioner.setNoLocking(true);
+        provisioner.execute(plan);
+        mylogger.debug("Joiner:CreateAD: Inside Create AD Account ::: AD Plan is executed ");
+		
+        return plan;
+      </Source>
+    </Script>
+    <Transition to="NotifyGroup"/>
+  </Step>
+  <Step icon="Message" name="NotifyGroup" posX="293" posY="1" resultVariable="plan">
+    <Arg name="domain" value="ref:domain"/>
+    <Script>
+      <Source>
+        import sailpoint.object.*;
+        import sailpoint.api.*;
+        import sailpoint.object.*;
+        import sailpoint.tools.*;
+        import java.util.*;
+        import java.lang.*;
+        import java.text.*;
+        import org.apache.log4j.Logger;
+        import sailpoint.object.Custom;
+        
+        Logger  mylogger = Logger.getLogger("ihg.idm.Joiner");
+
+        Identity identityObject = context.getObjectByName(Identity.class, identityName);
+        String workerhrorgtype=null;
+        String domain="";
+        Boolean send=false;
+        Custom allowedValues = context.getObjectByName(Custom.class, "IHG_EmailConstants");
+        String notificationTarget = allowedValues.get("ADCreationTarget");
+        
+        /**DS Comments :: Release 03/31/2017 changing below method to use locationtype instead of orgtype**/
+		String locationtype=null;
+		 
+		
+		
+        if(identityObject.getAttribute("locationtype")!=null){
+        locationtype=identityObject.getAttribute("locationtype");
+
+        if((locationtype.equalsIgnoreCase("corporate"))||(locationtype.equalsIgnoreCase("reservations"))){
+
+        //if((workerhrorgtype.equalsIgnoreCase("corporate"))||(workerhrorgtype.equalsIgnoreCase("reservations"))){
+        domain=getOUCorpRes(identityObject);
+        if(domain!=null){
+        send=sendNotificationEmail(domain);
+        if(send){
+        String tplName = "IHG_Email_AD_Creation_Notification_Template";
+       
+        String emailDest = notificationTarget;
+        EmailTemplate template = context.getObjectByName(EmailTemplate.class, tplName);
+
+        if (null == template) {
+       // mylogger.error("Joiner:CreateAD:ERROR: could not find email template [ " + tplName + "]");
+        return;
+        }
+        template = (EmailTemplate) template.deepCopy(context);
+        if (null == template) {
+       // mylogger.error("Joiner:CreateAD:ERROR: failed to deepCopy template [ " + tplName + "]");
+        return;
+        }
+        Map args = new HashMap();
+        args.put("identityName",identityName );
+        String udn=workflow.get("userdn");
+        args.put("userdn",udn);
+        EmailOptions ops = new EmailOptions(emailDest, args);
+        context.sendEmailNotification(template, ops);
+
+        }
+        }
+        }
+        }
+        mylogger.debug("Joiner:CreateAD: Inside NotifyGroup ::: "+send);
+
+      </Source>
+    </Script>
+    <Transition to="end"/>
+  </Step>
+  <Step name="Compile Project" posX="406" posY="10" resultVariable="project">
+    <Arg name="requester" value="string:spadmin"/>
+    <Arg name="requireCreateTemplates" value="string:false"/>
+    <Arg name="identityName" value="ref:identityName"/>
+    <Arg name="noApplicationTemplates" value="string:true"/>
+    <Arg name="source" value="string:UI"/>
+    <Arg name="optimisticProvisioning" value="string:false"/>
+    <Arg name="plan" value="ref:plan"/>
+    <Description>Compile the provisioning plan into a provisioning project.
+      If you need to pass in provisioner options like "noFiltering"
+      or "noRoleDeprovisioning" you must pass them as explicit
+      arguments to the call.
+      The evaluation options "requester" and "source" are commonly
+      set here.
+      You can also pass things into the Template and Field scripts by
+      defining Args in this step.</Description>
+    <Script>
+      <Source>
+        workflow.put("isADDomainPresent","true");
+      </Source>
+    </Script>
+    <Transition to="Provision"/>
+  </Step>
+  <Step icon="Provision" name="Provision" posX="682" posY="10">
+    <Arg name="background" value="string:true"/>
+    <Arg name="project" value="ref:project"/>
+    <Description>Provision the project.</Description>
+    <Transition to="end"/>
+  </Step>
+  <Step icon="Stop" name="end" posX="784" posY="10"/>
+</Workflow>
